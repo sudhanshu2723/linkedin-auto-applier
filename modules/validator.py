@@ -169,7 +169,7 @@ def validate_secrets() -> None | ValueError | TypeError:
     
     ##> ------ Yang Li : MARKYangL - Feature ------
     # Validate DeepSeek configuration
-    check_string(ai_provider, "ai_provider", ["openai", "deepseek"])
+    check_string(ai_provider, "ai_provider", ["openai", "deepseek", "gemini"])
 
     ##> ------ Tim L : tulxoro - Refactor ------
     if ai_provider == "deepseek":
@@ -207,6 +207,12 @@ def validate_settings() -> None | ValueError | TypeError:
     check_string(logs_folder_path, "logs_folder_path", min_length=1)
 
     check_int(click_gap, "click_gap", 0)
+    check_int(apply_gap_min, "apply_gap_min", 0)
+    check_int(apply_gap_max, "apply_gap_max", 0)
+    check_int(max_applications_per_day, "max_applications_per_day", 0)
+    check_int(long_break_every, "long_break_every", 1)
+    check_int(long_break_min, "long_break_min", 1)
+    check_int(long_break_max, "long_break_max", 1)
 
     check_boolean(run_in_background, "run_in_background")
     check_boolean(disable_extensions, "disable_extensions")
@@ -214,6 +220,8 @@ def validate_settings() -> None | ValueError | TypeError:
     check_boolean(smooth_scroll, "smooth_scroll")
     check_boolean(keep_screen_awake, "keep_screen_awake")
     check_boolean(stealth_mode, "stealth_mode")
+    check_boolean(showAiErrorAlerts, "showAiErrorAlerts")
+    check_boolean(use_tailored_resume, "use_tailored_resume")
 
 
 

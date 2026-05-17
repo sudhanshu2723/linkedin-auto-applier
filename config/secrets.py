@@ -19,13 +19,13 @@ version:    24.12.3.10.30
 
 
 # Login Credentials for LinkedIn (Optional)
-username = "username@example.com"       # Enter your username in the quotes
-password = "example_password"           # Enter your password in the quotes
+username = "YOUR_LINKEDIN_EMAIL"       # Set via LINKEDIN_USERNAME GitHub Secret
+password = "YOUR_LINKEDIN_PASSWORD"   # Set via LINKEDIN_PASSWORD GitHub Secret
 
 
 ## Artificial Intelligence (Beta Not-Recommended)
 # Use AI
-use_AI = False                          # True or False, Note: True or False are case-sensitive
+use_AI = True                          # True or False, Note: True or False are case-sensitive
 '''
 Note: Set it as True only if you want to use AI, and If you either have a
 1. Local LLM model running on your local machine, with it's APIs exposed. Example softwares to achieve it are:
@@ -58,14 +58,14 @@ Note: Don't forget to add / at the end of your url. You may not need this if you
 '''
 
 # Your LLM API key or other AI API key 
-llm_api_key = "not-needed"              # Enter your API key in the quotes, make sure it's valid, if not will result in error.
+llm_api_key = "YOUR_OPENAI_API_KEY"    # Set via OPENAI_API_KEY GitHub Secret
 '''
 Note: Leave it empty as "" or "not-needed" if not needed. Else will result in error!
 If you are using ollama, you MUST put "not-needed".
 '''
 
 # Your LLM model name or other AI model name
-llm_model = "gpt-5-mini"          # Examples: "gpt-3.5-turbo", "gpt-4o", "llama-3.2-3b-instruct", "qwen3:latest", "gemini-pro", "gemini-1.5-flash", "gemini-2.5-flash", "deepseek-llm:latest"
+llm_model = "gpt-4o-mini"          # Examples: "gpt-3.5-turbo", "gpt-4o", "llama-3.2-3b-instruct", "qwen3:latest", "gemini-pro", "gemini-1.5-flash", "gemini-2.5-flash", "deepseek-llm:latest"
 
 llm_spec = "openai"                # Examples: "openai", "openai-like", "openai-like-github", "openai-like-mistral"
 '''

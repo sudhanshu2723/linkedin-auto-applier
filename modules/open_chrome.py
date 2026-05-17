@@ -45,15 +45,57 @@ def createChromeSession(isRetry: bool = False):
         print_lg("Logging in with a guest profile, Web history will not be saved!")
         options.add_argument(f"--user-data-dir={get_default_temp_profile()}")
     if stealth_mode:
-        # try: 
-        #     driver = uc.Chrome(driver_executable_path="C:\\Program Files\\Google\\Chrome\\chromedriver-win64\\chromedriver.exe", options=options)
-        # except (FileNotFoundError, PermissionError) as e: 
-        #     print_lg("(Undetected Mode) Got '{}' when using pre-installed ChromeDriver.".format(type(e).__name__)) 
-            print_lg("Downloading Chrome Driver... This may take some time. Undetected mode requires download every run!")
-            driver = uc.Chrome(options=options)
+        import os, glob, subprocess, re
+        # Auto-detect Chrome version
+        def get_chrome_version():
+            try:
+                chrome_paths = [
+                    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                ]
+                for path in chrome_paths:
+                    if os.path.exists(path):
+                        result = subprocess.run(['powershell', '-command', f'(Get-Item "{path}").VersionInfo.FileVersion'], capture_output=True, text=True)
+                        match = re.search(r'(\d+)\.', result.stdout.strip())
+                        if match:
+                            return int(match.group(1))
+            except:
+                pass
+            return None
+
+        chrome_version = get_chrome_version()
+        print_lg(f"Detected Chrome version: {chrome_version}")
+
+        # Find a cached chromedriver to avoid re-downloading every run
+        uc_cache = os.path.join(os.path.expanduser("~"), "appdata", "roaming", "undetected_chromedriver")
+        cached = glob.glob(os.path.join(uc_cache, "*.exe"))
+        common = [
+            r"C:\Program Files\Google\Chrome\chromedriver-win64\chromedriver.exe",
+            r"C:\Program Files (x86)\Google\Chrome\chromedriver-win64\chromedriver.exe",
+        ]
+        local_driver = next((p for p in common if os.path.exists(p)), None) or (cached[0] if cached else None)
+        if local_driver:
+            try:
+                print_lg(f"Using cached ChromeDriver: {local_driver}")
+                driver = uc.Chrome(driver_executable_path=local_driver, options=options)
+            except Exception as e:
+                print_lg(f"Cached driver failed ({type(e).__name__}), downloading...")
+                fresh_options = uc.ChromeOptions()
+                for arg in options.arguments:
+                    fresh_options.add_argument(arg)
+                if chrome_version:
+                    driver = uc.Chrome(options=fresh_options, version_main=chrome_version)
+                else:
+                    driver = uc.Chrome(options=fresh_options)
+        else:
+            print_lg("Downloading Chrome Driver... This may take some time.")
+            if chrome_version:
+                driver = uc.Chrome(options=options, version_main=chrome_version)
+            else:
+                driver = uc.Chrome(options=options)
     else: driver = webdriver.Chrome(options=options) #, service=Service(executable_path="C:\\Program Files\\Google\\Chrome\\chromedriver-win64\\chromedriver.exe"))
     driver.maximize_window()
-    wait = WebDriverWait(driver, 5)
+    wait = WebDriverWait(driver, 15)
     actions = ActionChains(driver)
     return options, driver, actions, wait
 
@@ -71,5 +113,4 @@ except Exception as e:
     from pyautogui import alert
     alert(msg, "Error in opening chrome")
     try: driver.quit()
-    except NameError: exit()
-    
+    except (NameError, AttributeError): exit()

@@ -47,9 +47,15 @@ from modules.clickers_and_finders import *
 from modules.validator import validate_config
 
 if use_AI:
-    from modules.ai.openaiConnections import ai_create_openai_client, ai_extract_skills, ai_answer_question, ai_close_openai_client
-    from modules.ai.deepseekConnections import deepseek_create_client, deepseek_extract_skills, deepseek_answer_question
-    from modules.ai.geminiConnections import gemini_create_client, gemini_extract_skills, gemini_answer_question
+    if ai_provider.lower() == "openai":
+        from modules.ai.openaiConnections import ai_create_openai_client, ai_extract_skills, ai_answer_question, ai_close_openai_client
+    elif ai_provider.lower() == "deepseek":
+        from modules.ai.deepseekConnections import deepseek_create_client, deepseek_extract_skills, deepseek_answer_question
+    elif ai_provider.lower() == "gemini":
+        from modules.ai.geminiConnections import gemini_create_client, gemini_extract_skills, gemini_answer_question
+
+if use_AI and use_tailored_resume:
+    from modules.resumes.tailored_resume import generate_tailored_resume
 
 from typing import Literal
 
@@ -257,7 +263,7 @@ def apply_filters() -> None:
 
     except Exception as e:
         print_lg("Setting the preferences failed!")
-        pyautogui.confirm(f"Faced error while applying filters. Please make sure correct filters are selected, click on show results and click on any button of this dialog, I know it sucks. Can't turn off Pause after search when error occurs! ERROR: {e}", ["Doesn't look good, but Continue XD", "Look's good, Continue"])
+        pyautogui.confirm(f"Faced error while applying filters. Please make sure correct filters are selected, click on show results and click on any button of this dialog, I know it sucks. Can't turn off Pause after search when error occurs! ERROR: {e}", "Filter Error", ["Doesn't look good, but Continue XD", "Look's good, Continue"])
         # print_lg(e)
 
 
@@ -418,8 +424,7 @@ def get_job_description(
             experience_required = "Error in extraction"
             print_lg("Unable to extract years of experience required!")
             # print_lg(e)
-    finally:
-        return jobDescription, experience_required, skip, skipReason, skipMessage
+    return jobDescription, experience_required, skip, skipReason, skipMessage
         
 
 
@@ -427,7 +432,7 @@ def get_job_description(
 def upload_resume(modal: WebElement, resume: str) -> tuple[bool, str]:
     try:
         modal.find_element(By.NAME, "file").send_keys(os.path.abspath(resume))
-        return True, os.path.basename(default_resume_path)
+        return True, os.path.basename(resume)
     except: return False, "Previous resume"
 
 # Function to answer common questions for Easy Apply
@@ -868,7 +873,7 @@ def apply_to_jobs(search_terms: list[str]) -> None:
     applied_jobs = get_applied_job_ids()
     rejected_jobs = set()
     blacklisted_companies = set()
-    global current_city, failed_count, skip_count, easy_applied_count, external_jobs_count, tabs_count, pause_before_submit, pause_at_failed_question, useNewResume
+    global current_city, failed_count, skip_count, easy_applied_count, external_jobs_count, tabs_count, pause_before_submit, pause_at_failed_question, useNewResume, dailyEasyApplyLimitReached
     current_city = current_city.strip()
 
     if randomize_search_order:  shuffle(search_terms)
@@ -1000,6 +1005,40 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                             skills = "Error extracting skills"
                         ##<
 
+                    # ── Tailored Resume Generation ──────────────────────────────────────
+                    # If enabled, generate a job-specific PDF resume using AI + career-ops
+                    # CRITICAL: If tailored resume generation fails, SKIP this job
+                    tailored_resume_path = None
+                    if use_AI and use_tailored_resume and aiClient and description != "Unknown":
+                        try:
+                            print_lg("[TailoredResume] Attempting to generate tailored resume...")
+                            tailored_resume_path = generate_tailored_resume(
+                                ai_client=aiClient,
+                                ai_provider=ai_provider,
+                                job_description=description,
+                                company_name=company if company else "company",
+                            )
+                            
+                            if not tailored_resume_path:
+                                print_lg("[TailoredResume] ❌ CRITICAL: Tailored resume generation failed!")
+                                print_lg("[TailoredResume] ⚠️  SKIPPING this job - will not apply with default resume")
+                                print_lg("[TailoredResume] Please check the error logs above and fix the issue")
+                                discard_job()
+                                continue  # Skip to next job
+                            else:
+                                print_lg(f"[TailoredResume] ✅ SUCCESS: Using tailored resume: {tailored_resume_path}")
+                                
+                        except Exception as e:
+                            print_lg(f"[TailoredResume] ❌ EXCEPTION during tailored resume generation: {e}")
+                            print_lg("[TailoredResume] ⚠️  SKIPPING this job - will not apply with default resume")
+                            import traceback
+                            print_lg(f"[TailoredResume] Traceback:\n{traceback.format_exc()}")
+                            discard_job()
+                            continue  # Skip to next job
+                    
+                    resume_to_upload = tailored_resume_path if tailored_resume_path else default_resume_path
+                    # ───────────────────────────────────────────────────────────────────
+
                     uploaded = False
                     # Case 1: Easy Apply Button
                     # First try the classic button with "Easy" in aria-label
@@ -1065,7 +1104,7 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                                         errored = "stuck"
                                         raise Exception("Seems like stuck in a continuous loop of next, probably because of new questions.")
                                     questions_list = answer_questions(modal, questions_list, work_location, job_description=description)
-                                    if useNewResume and not uploaded: uploaded, resume = upload_resume(modal, default_resume_path)
+                                    if useNewResume and not uploaded: uploaded, resume = upload_resume(modal, resume_to_upload)
                                     try: next_button = modal.find_element(By.XPATH, './/span[normalize-space(.)="Review"]') 
                                     except NoSuchElementException:  next_button = modal.find_element(By.XPATH, './/button[contains(span, "Next")]')
                                     try: next_button.click()
@@ -1122,6 +1161,31 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                     if application_link == "Easy Applied": easy_applied_count += 1
                     else:   external_jobs_count += 1
                     applied_jobs.add(job_id)
+
+                    # ── Bot-detection avoidance ──────────────────────────────────────
+                    # Daily cap check
+                    if max_applications_per_day > 0 and easy_applied_count >= max_applications_per_day:
+                        print_lg(f"\n###############  Daily application cap of {max_applications_per_day} reached! Stopping for today.  ###############\n")
+                        dailyEasyApplyLimitReached = True
+                        return
+
+                    # Long break every N applications
+                    if long_break_every > 0 and easy_applied_count > 0 and easy_applied_count % long_break_every == 0:
+                        long_break_secs = randint(long_break_min, long_break_max) * 60
+                        print_lg(f"Taking a long break for {long_break_secs // 60} min after {easy_applied_count} applications...")
+                        try:
+                            sleep(long_break_secs)
+                        except KeyboardInterrupt:
+                            print_lg("Long break interrupted by user. Continuing...")
+
+                    # Human-like random gap between applications
+                    gap = randint(apply_gap_min, apply_gap_max)
+                    print_lg(f"Waiting {gap}s before next application...")
+                    try:
+                        sleep(gap)
+                    except KeyboardInterrupt:
+                        print_lg("Gap interrupted by user. Continuing to next job...")
+                    # ─────────────────────────────────────────────────────────────────
 
 
 
@@ -1240,7 +1304,7 @@ def main() -> None:
         print_lg("Browser window closed or session is invalid. Exiting.", e)
     except Exception as e:
         critical_error_log("In Applier Main", e)
-        pyautogui.alert(e,alert_title)
+        pyautogui.alert(str(e), alert_title)
     finally:
         summary = "Total runs: {}\nJobs Easy Applied: {}\nExternal job links collected: {}\nTotal applied or collected: {}\nFailed jobs: {}\nIrrelevant jobs skipped: {}\n".format(total_runs,easy_applied_count,external_jobs_count,easy_applied_count + external_jobs_count,failed_count,skip_count)
         print_lg(summary)
@@ -1297,6 +1361,8 @@ def main() -> None:
                 driver.quit()
         except WebDriverException as e:
             print_lg("Browser already closed.", e)
+        except OSError:
+            pass  # undetected_chromedriver cleanup noise on Windows
         except Exception as e: 
             critical_error_log("When quitting...", e)
 

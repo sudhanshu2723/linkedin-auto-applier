@@ -53,6 +53,11 @@ stop_date_cycle_at_24hr = True      # True or False, Note: True or False are cas
 # Give the path to the folder where all the generated resumes are to be stored
 generated_resume_path = "all resumes/" # (In Development)
 
+# Tailor resume to each job description before applying?
+# Requires: use_AI = True in secrets.py, career-ops repo at D:\Github_Codes\Job_Search\career-ops, and Node.js installed
+# When enabled, generates a job-specific PDF resume using AI + career-ops pipeline and uploads it instead of the default resume
+use_tailored_resume = False         # True or False, Note: True or False are case-sensitive
+
 
 
 
@@ -65,7 +70,20 @@ failed_file_name = "all excels/all_failed_applications_history.csv"
 logs_folder_path = "logs/"
 
 # Set the maximum amount of time allowed to wait between each click in secs
-click_gap = 1                       # Enter max allowed secs to wait approximately. (Only Non Negative Integers Eg: 0,1,2,3,....)
+click_gap = 3                       # Enter max allowed secs to wait approximately. (Only Non Negative Integers Eg: 0,1,2,3,....)
+
+# Set the minimum and maximum wait time (in seconds) between consecutive job applications to avoid bot detection
+# 45 seconds to 50 minutes (3000 seconds) - human-like random range
+apply_gap_min = 45                  # Minimum seconds to wait after each application.
+apply_gap_max = 3000                # Maximum seconds to wait after each application. (50 minutes = 3000s)
+
+# Maximum number of Easy Apply applications per day (0 = unlimited, NOT recommended)
+max_applications_per_day = 45       # 45+ jobs daily
+
+# Take a long break after every N applications to avoid detection
+long_break_every = 10               # Take a long break after this many applications.
+long_break_min = 8                  # Minimum minutes for the long break.
+long_break_max = 15                 # Maximum minutes for the long break.
 
 # If you want to see Chrome running then set run_in_background as False (May reduce performance). 
 run_in_background = False           # True or False, Note: True or False are case-sensitive ,   If True, this will make pause_at_failed_question, pause_before_submit and run_in_background as False

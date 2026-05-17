@@ -1,0 +1,194 @@
+name: LinkedIn Auto Job Applier - Daily Run
+
+on:
+  # Run daily at 3:30 AM IST (22:00 UTC previous day)
+  schedule:
+    - cron: '0 3 * * *'   # 3:00 AM UTC = 8:30 AM IST
+
+  # Allow manual trigger from GitHub Actions tab
+  workflow_dispatch:
+
+jobs:
+  apply-jobs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360   # 6 hour max (45 jobs × ~8 min avg including gaps)
+
+    steps:
+      # ── 1. Checkout repo ────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Python ────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # ── 3. Install Chrome ───────────────────────────────────────────────
+      - name: Install Google Chrome
+        run: |
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update -q
+          sudo apt-get install -y google-chrome-stable
+          google-chrome --version
+
+      # ── 4. Install Python dependencies ──────────────────────────────────
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ── 5. Inject secrets into config files ─────────────────────────────
+      - name: Configure secrets
+        env:
+          LINKEDIN_USERNAME: ${{ secrets.LINKEDIN_USERNAME }}
+          LINKEDIN_PASSWORD: ${{ secrets.LINKEDIN_PASSWORD }}
+          OPENAI_API_KEY:    ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python - <<'EOF'
+          import os, re
+
+          # ── secrets.py ──────────────────────────────────────────────────
+          with open('config/secrets.py', 'r') as f:
+              content = f.read()
+
+          content = re.sub(
+              r'^username\s*=.*$',
+              f'username = "{os.environ["LINKEDIN_USERNAME"]}"',
+              content, flags=re.MULTILINE
+          )
+          content = re.sub(
+              r'^password\s*=.*$',
+              f'password = "{os.environ["LINKEDIN_PASSWORD"]}"',
+              content, flags=re.MULTILINE
+          )
+          content = re.sub(
+              r'^llm_api_key\s*=.*$',
+              f'llm_api_key = "{os.environ["OPENAI_API_KEY"]}"',
+              content, flags=re.MULTILINE
+          )
+
+          with open('config/secrets.py', 'w') as f:
+              f.write(content)
+
+          print("Secrets injected into config/secrets.py")
+          EOF
+
+      # ── 6. Configure headless mode for CI ───────────────────────────────
+      - name: Configure headless mode
+        run: |
+          python - <<'EOF'
+          import re
+
+          with open('config/settings.py', 'r') as f:
+              content = f.read()
+
+          # Force headless + background mode for CI
+          content = re.sub(r'^run_in_background\s*=.*$', 'run_in_background = True',  content, flags=re.MULTILINE)
+          content = re.sub(r'^safe_mode\s*=.*$',         'safe_mode = True',           content, flags=re.MULTILINE)
+          content = re.sub(r'^stealth_mode\s*=.*$',      'stealth_mode = False',       content, flags=re.MULTILINE)
+          # Reduce gaps for CI (45s min, 3 min max) to fit within 6hr window
+          content = re.sub(r'^apply_gap_min\s*=.*$',     'apply_gap_min = 45',         content, flags=re.MULTILINE)
+          content = re.sub(r'^apply_gap_max\s*=.*$',     'apply_gap_max = 180',        content, flags=re.MULTILINE)
+          # Disable pyautogui popups (no screen in CI)
+          content = re.sub(r'^pause_before_submit\s*=.*$', 'pause_before_submit = False', content, flags=re.MULTILINE)
+          content = re.sub(r'^pause_at_failed_question\s*=.*$', 'pause_at_failed_question = False', content, flags=re.MULTILINE)
+
+          with open('config/settings.py', 'w') as f:
+              f.write(content)
+
+          print("Settings configured for CI/headless mode")
+          EOF
+
+      # ── 7. Patch pyautogui for headless (no display) ────────────────────
+      - name: Patch pyautogui for headless
+        run: |
+          python - <<'EOF'
+          # Replace all pyautogui.alert / pyautogui.confirm calls with no-ops
+          # so the bot doesn't hang waiting for a dialog box in CI
+          import re
+
+          with open('runAiBot.py', 'r') as f:
+              content = f.read()
+
+          # Patch: pyautogui.alert(...) -> None
+          content = re.sub(
+              r'pyautogui\.alert\s*\([^)]*(?:\([^)]*\)[^)]*)*\)',
+              'None  # pyautogui.alert disabled in CI',
+              content
+          )
+          # Patch: pyautogui.confirm(...) -> "Continue"
+          content = re.sub(
+              r'pyautogui\.confirm\s*\([^)]*(?:\([^)]*\)[^)]*)*\)',
+              '"Continue"  # pyautogui.confirm disabled in CI',
+              content
+          )
+
+          with open('runAiBot.py', 'w') as f:
+              f.write(content)
+
+          print("pyautogui patched for headless CI")
+          EOF
+
+      # ── 8. Set up virtual display (Xvfb) ────────────────────────────────
+      - name: Set up virtual display
+        run: |
+          sudo apt-get install -y xvfb
+          Xvfb :99 -screen 0 1920x1080x24 &
+          echo "DISPLAY=:99" >> $GITHUB_ENV
+          sleep 2
+          echo "Virtual display started"
+
+      # ── 9. Create required directories ──────────────────────────────────
+      - name: Create required directories
+        run: |
+          mkdir -p "all resumes/default"
+          mkdir -p "all resumes/temp"
+          mkdir -p "all excels"
+          mkdir -p "logs/screenshots"
+
+      # ── 10. Copy resume ─────────────────────────────────────────────────
+      - name: Restore resume from secret
+        env:
+          RESUME_BASE64: ${{ secrets.RESUME_BASE64 }}
+        run: |
+          if [ -n "$RESUME_BASE64" ]; then
+            echo "$RESUME_BASE64" | base64 -d > "all resumes/default/resume.pdf"
+            echo "Resume restored from secret ($(wc -c < 'all resumes/default/resume.pdf') bytes)"
+          else
+            echo "WARNING: RESUME_BASE64 secret not set - bot will use previously uploaded LinkedIn resume"
+          fi
+
+      # ── 11. Run the bot ─────────────────────────────────────────────────
+      - name: Run LinkedIn Auto Job Applier
+        timeout-minutes: 330
+        run: |
+          python runAiBot.py 2>&1 | tee logs/github_actions_run.log
+        continue-on-error: true   # Don't fail the workflow if bot exits with error
+
+      # ── 12. Upload logs as artifact ─────────────────────────────────────
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bot-logs-${{ github.run_number }}
+          path: |
+            logs/
+            all excels/
+          retention-days: 30
+
+      # ── 13. Summary ─────────────────────────────────────────────────────
+      - name: Print summary
+        if: always()
+        run: |
+          echo "=== Bot Run Summary ==="
+          if [ -f "all excels/all_applied_applications_history.csv" ]; then
+            echo "Applications logged: $(wc -l < 'all excels/all_applied_applications_history.csv')"
+          fi
+          if [ -f "logs/github_actions_run.log" ]; then
+            echo ""
+            echo "=== Last 30 lines of log ==="
+            tail -30 logs/github_actions_run.log
+          fi

@@ -9,6 +9,12 @@ logs
 old
 
 secrets.py
+config/secrets.py
 config/personals.py
 .venv
 apikeys.py
+resume_b64.txt
+*.pyc
+career-ops/output/
+career-ops/jds/
+career-ops/node_modules/
