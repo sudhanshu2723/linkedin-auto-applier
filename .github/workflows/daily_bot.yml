@@ -149,16 +149,13 @@ jobs:
           mkdir -p "all excels"
           mkdir -p "logs/screenshots"
 
-      # ── 10. Copy resume ─────────────────────────────────────────────────
-      - name: Restore resume from secret
-        env:
-          RESUME_BASE64: ${{ secrets.RESUME_BASE64 }}
+      # ── 10. Resume is committed directly in the repo ───────────────────
+      - name: Verify resume exists
         run: |
-          if [ -n "$RESUME_BASE64" ]; then
-            echo "$RESUME_BASE64" | base64 -d > "all resumes/default/resume.pdf"
-            echo "Resume restored from secret ($(wc -c < 'all resumes/default/resume.pdf') bytes)"
+          if [ -f "all resumes/default/resume.pdf" ]; then
+            echo "✅ Resume found: $(wc -c < 'all resumes/default/resume.pdf') bytes"
           else
-            echo "WARNING: RESUME_BASE64 secret not set - bot will use previously uploaded LinkedIn resume"
+            echo "⚠️  Resume not found - bot will use previously uploaded LinkedIn resume"
           fi
 
       # ── 11. Run the bot ─────────────────────────────────────────────────
