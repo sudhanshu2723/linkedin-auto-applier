@@ -1,31 +1,28 @@
 name: LinkedIn Auto Job Applier - Daily Run
 
 on:
-  # Run daily at 3:30 AM IST (22:00 UTC previous day)
   schedule:
-    - cron: '0 3 * * *'   # 3:00 AM UTC = 8:30 AM IST
+    - cron: '0 3 * * *'   # 3:00 AM UTC = 8:30 AM IST daily
+  workflow_dispatch:       # Allow manual trigger
 
-  # Allow manual trigger from GitHub Actions tab
-  workflow_dispatch:
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   apply-jobs:
     runs-on: ubuntu-latest
-    timeout-minutes: 360   # 6 hour max (45 jobs × ~8 min avg including gaps)
+    timeout-minutes: 360
 
     steps:
-      # ── 1. Checkout repo ────────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Set up Python ────────────────────────────────────────────────
-      - name: Set up Python 3.14
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: '3.14'
+          python-version: '3.12'
           cache: 'pip'
 
-      # ── 3. Install Chrome ───────────────────────────────────────────────
       - name: Install Google Chrome
         run: |
           wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
@@ -34,170 +31,55 @@ jobs:
           sudo apt-get install -y google-chrome-stable
           google-chrome --version
 
-      # ── 4. Install Python dependencies ──────────────────────────────────
       - name: Install Python dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
-      # ── 5. Inject secrets into config files ─────────────────────────────
-      - name: Configure secrets
+      - name: Apply CI patches
         env:
           LINKEDIN_USERNAME: ${{ secrets.LINKEDIN_USERNAME }}
           LINKEDIN_PASSWORD: ${{ secrets.LINKEDIN_PASSWORD }}
           OPENAI_API_KEY:    ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          python - <<'EOF'
-          import os, re
+        run: python ci_patch.py
 
-          # ── secrets.py ──────────────────────────────────────────────────
-          with open('config/secrets.py', 'r') as f:
-              content = f.read()
-
-          content = re.sub(
-              r'^username\s*=.*$',
-              f'username = "{os.environ["LINKEDIN_USERNAME"]}"',
-              content, flags=re.MULTILINE
-          )
-          content = re.sub(
-              r'^password\s*=.*$',
-              f'password = "{os.environ["LINKEDIN_PASSWORD"]}"',
-              content, flags=re.MULTILINE
-          )
-          content = re.sub(
-              r'^llm_api_key\s*=.*$',
-              f'llm_api_key = "{os.environ["OPENAI_API_KEY"]}"',
-              content, flags=re.MULTILINE
-          )
-
-          with open('config/secrets.py', 'w') as f:
-              f.write(content)
-
-          print("Secrets injected into config/secrets.py")
-          EOF
-
-      # ── 6. Configure headless mode for CI ───────────────────────────────
-      - name: Configure headless mode
-        run: |
-          python - <<'EOF'
-          import re
-
-          with open('config/settings.py', 'r') as f:
-              content = f.read()
-
-          # Force headless + background mode for CI
-          content = re.sub(r'^run_in_background\s*=.*$', 'run_in_background = True',  content, flags=re.MULTILINE)
-          content = re.sub(r'^safe_mode\s*=.*$',         'safe_mode = True',           content, flags=re.MULTILINE)
-          content = re.sub(r'^stealth_mode\s*=.*$',      'stealth_mode = False',       content, flags=re.MULTILINE)
-          # Reduce gaps for CI (45s min, 3 min max) to fit within 6hr window
-          content = re.sub(r'^apply_gap_min\s*=.*$',     'apply_gap_min = 45',         content, flags=re.MULTILINE)
-          content = re.sub(r'^apply_gap_max\s*=.*$',     'apply_gap_max = 180',        content, flags=re.MULTILINE)
-          # Disable pyautogui popups (no screen in CI)
-          content = re.sub(r'^pause_before_submit\s*=.*$', 'pause_before_submit = False', content, flags=re.MULTILINE)
-          content = re.sub(r'^pause_at_failed_question\s*=.*$', 'pause_at_failed_question = False', content, flags=re.MULTILINE)
-          with open('config/settings.py', 'w') as f:
-              f.write(content)
-
-          print("Settings configured for CI/headless mode")
-          EOF
-
-      # ── 7. Patch pyautogui for headless (no display) ────────────────────
-      - name: Patch pyautogui for headless
-        run: |
-          python - <<'EOF'
-          import re
-
-          with open('runAiBot.py', 'r') as f:
-              content = f.read()
-
-          # Patch: pyautogui.alert(...) -> None (safe standalone call)
-          content = re.sub(
-              r'pyautogui\.alert\s*\([^)]*(?:\([^)]*\)[^)]*)*\)',
-              'None',
-              content
-          )
-          # Patch: pyautogui.confirm(...) -> "Continue" but wrap in-line if guards
-          # Replace the entire if-line that uses pyautogui.confirm as condition
-          content = re.sub(
-              r'if pause_after_filters and .+?pyautogui\.confirm\(.+?\):',
-              'if False:  # pyautogui.confirm disabled in CI',
-              content,
-              flags=re.DOTALL
-          )
-          # Replace any remaining standalone pyautogui.confirm calls
-          content = re.sub(
-              r'pyautogui\.confirm\s*\([^)]*(?:\([^)]*\)[^)]*)*\)',
-              '"Continue"',
-              content
-          )
-
-          with open('runAiBot.py', 'w') as f:
-              f.write(content)
-
-          # Verify syntax
-          import py_compile
-          try:
-              py_compile.compile('runAiBot.py', doraise=True)
-              print("✅ runAiBot.py syntax OK after patching")
-          except py_compile.PyCompileError as e:
-              print(f"❌ Syntax error after patching: {e}")
-              exit(1)
-          EOF
-
-      # ── 8. Set up virtual display (Xvfb) ────────────────────────────────
-      - name: Set up virtual display
+      - name: Set up virtual display (Xvfb)
         run: |
           sudo apt-get install -y xvfb
           Xvfb :99 -screen 0 1920x1080x24 &
           echo "DISPLAY=:99" >> $GITHUB_ENV
           sleep 2
-          echo "Virtual display started"
 
-      # ── 9. Create required directories ──────────────────────────────────
       - name: Create required directories
         run: |
-          mkdir -p "all resumes/default"
-          mkdir -p "all resumes/temp"
-          mkdir -p "all excels"
-          mkdir -p "logs/screenshots"
+          mkdir -p "all resumes/default" "all resumes/temp" "all excels" "logs/screenshots"
 
-      # ── 10. Resume is committed directly in the repo ───────────────────
-      - name: Verify resume exists
+      - name: Verify resume
         run: |
           if [ -f "all resumes/default/resume.pdf" ]; then
-            echo "✅ Resume found: $(wc -c < 'all resumes/default/resume.pdf') bytes"
+            echo "✅ Resume: $(wc -c < 'all resumes/default/resume.pdf') bytes"
           else
-            echo "⚠️  Resume not found - bot will use previously uploaded LinkedIn resume"
+            echo "⚠️  No resume file - bot will use LinkedIn's previously uploaded resume"
           fi
 
-      # ── 11. Run the bot ─────────────────────────────────────────────────
       - name: Run LinkedIn Auto Job Applier
         timeout-minutes: 330
-        run: |
-          python runAiBot.py 2>&1 | tee logs/github_actions_run.log
-        continue-on-error: true   # Don't fail the workflow if bot exits with error
+        run: python runAiBot.py 2>&1 | tee logs/run.log
+        continue-on-error: true
 
-      # ── 12. Upload logs as artifact ─────────────────────────────────────
+      - name: Print summary
+        if: always()
+        run: |
+          echo "=== Run Summary ==="
+          [ -f "all excels/all_applied_applications_history.csv" ] && echo "Applications: $(wc -l < 'all excels/all_applied_applications_history.csv')" || echo "No applications CSV found"
+          echo "=== Last 40 lines ==="
+          [ -f "logs/run.log" ] && tail -40 logs/run.log || echo "No log file"
+
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: bot-logs-${{ github.run_number }}
           path: |
-            logs/
+            logs/run.log
             all excels/
+          if-no-files-found: warn
           retention-days: 30
-
-      # ── 13. Summary ─────────────────────────────────────────────────────
-      - name: Print summary
-        if: always()
-        run: |
-          echo "=== Bot Run Summary ==="
-          if [ -f "all excels/all_applied_applications_history.csv" ]; then
-            echo "Applications logged: $(wc -l < 'all excels/all_applied_applications_history.csv')"
-          fi
-          if [ -f "logs/github_actions_run.log" ]; then
-            echo ""
-            echo "=== Last 30 lines of log ==="
-            tail -30 logs/github_actions_run.log
-          fi
